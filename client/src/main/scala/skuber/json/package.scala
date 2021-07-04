@@ -3,7 +3,6 @@ package skuber.json
 import scala.language.implicitConversions
 import java.time._
 import java.time.format._
-
 import org.apache.commons.codec.binary.Base64
 import play.api.libs.functional.syntax._
 import play.api.libs.json._

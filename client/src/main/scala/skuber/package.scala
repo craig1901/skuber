@@ -1,6 +1,8 @@
 
-import scala.language.implicitConversions
+import akka.stream.scaladsl._
+
 import java.net.URL
+import scala.language.implicitConversions
 
 /*
  * Represents core types and aliases
@@ -75,10 +77,19 @@ package object skuber {
   // Just a type alias to ObjectResource 
   type KListItem = ObjectResource
 
+  // type for classes that can be items of some Kubernetes type, but for streaming purposes
+  type KStreamItem = ObjectResource
+
   // base trait for all list kinds
   sealed abstract class KList[K <: KListItem] extends TypeMeta {
     def metadata: Option[ListMeta]
     def items: List[K]
+  }
+
+  // base trait for streaming list kinds
+  sealed abstract class KStream[K <: KStreamItem] extends TypeMeta {
+    def metadata: Option[ListMeta]
+    def items: Source[K, _]
   }
 
   case class ListResource[K <: KListItem](
@@ -89,6 +100,15 @@ package object skuber {
   {
     def resourceVersion=metadata.map(_.resourceVersion).getOrElse("")
     def itemNames: String = items.map { k => k.name } mkString(",")
+  }
+
+  case class StreamResource[K <: KStreamItem](
+    override val apiVersion: String,
+    override val kind: String,
+    override val metadata: Option[ListMeta],
+    override val items: Source[K, _] = Source.empty[K]) extends KStream[K]
+  {
+    def resourceVersion: String = metadata.map(_.resourceVersion).getOrElse("")
   }
 
   implicit def toList[I <: KListItem](resource: KList[I]): List[I] = resource.items
@@ -278,7 +298,6 @@ package object skuber {
   // Initialisation of the Skuber Kubernetes client
 
   import akka.actor.ActorSystem
-  import akka.stream.Materializer
   import com.typesafe.config.Config
 
   /**

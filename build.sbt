@@ -1,7 +1,7 @@
 
 resolvers += "Typesafe Releases" at "https://repo.typesafe.com/typesafe/releases/"
 
-val akkaVersion = "2.6.8"
+val akkaVersion = "2.6.14"
 
 val scalaCheck = "org.scalacheck" %% "scalacheck" % "1.14.3"
 val specs2 = "org.specs2" %% "specs2-core" % "4.8.3"
@@ -18,6 +18,7 @@ val bouncyCastle = "org.bouncycastle" % "bcpkix-jdk15on" % "1.66"
 val akkaHttp = "com.typesafe.akka" %% "akka-http" % "10.1.12"
 val akkaStream = "com.typesafe.akka" %% "akka-stream" % akkaVersion
 val akka = "com.typesafe.akka" %% "akka-actor" % akkaVersion
+val akkaStreamAlpakka = "com.lightbend.akka" %% "akka-stream-alpakka-json-streaming" % "3.0.1"
 
 // Skuber uses akka logging, so the examples config uses the akka slf4j logger with logback backend
 val akkaSlf4j = "com.typesafe.akka" %% "akka-slf4j" % akkaVersion
@@ -62,7 +63,7 @@ lazy val commonSettings = Seq(
 lazy val skuberSettings = Seq(
   name := "skuber",
   libraryDependencies ++= Seq(
-    akkaHttp, akkaStream, playJson, snakeYaml, commonsIO, commonsCodec, bouncyCastle,
+    akkaHttp, akkaStream, akkaStreamAlpakka, playJson, snakeYaml, commonsIO, commonsCodec, bouncyCastle,
     scalaCheck % Test, specs2 % Test, mockito % Test, akkaStreamTestKit % Test,
     scalaTest % Test
   ).map(_.exclude("commons-logging", "commons-logging"))

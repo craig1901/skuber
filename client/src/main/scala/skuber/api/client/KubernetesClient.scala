@@ -2,7 +2,7 @@ package skuber.api.client
 
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
-import play.api.libs.json.{Writes,Format}
+import play.api.libs.json.{Format, Writes}
 import skuber.{DeleteOptions, HasStatusSubresource, LabelSelector, ListOptions, ListResource, ObjectResource, Pod, ResourceDefinition, Scale}
 import skuber.api.patch.Patch
 
@@ -96,12 +96,27 @@ trait KubernetesClient {
   def deleteAll[L <: ListResource[_]]()(implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L]
 
   /**
+    * Delete all resources of specified type in current namespace
+    * @tparam S stream resource type of resources to delete e.g. PodList, DeploymentList
+    * @return A future containing an Akka streams Source of resources that will be emitted
+    */
+  def deleteAllStream[S <: ObjectResource]()(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]]
+
+  /**
     * Delete all resources of specified type selected by a specified label selector in current namespace
     * @param labelSelector selects the resources to delete
     * @tparam L the list resource type of resources to delete e.g. PodList, DeploymentList
     * @return A future containing the list of all deleted resources
     */
   def deleteAllSelected[L <: ListResource[_]](labelSelector: LabelSelector)(implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L]
+
+  /**
+    * Delete all resources of specified type selected by a specified label selector in current namespace
+    * @param labelSelector selects the resources to delete
+    * @tparam S the list resource type of resources to delete e.g. PodList, DeploymentList
+    * @return A future containing an Akka streams Source of resources that will be emitted
+    */
+  def deleteAllSelectedStream[S <: ObjectResource](labelSelector: LabelSelector)(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]]
 
   /**
     * Return a list of the names of all namespaces in the cluster
@@ -117,6 +132,13 @@ trait KubernetesClient {
   def listByNamespace[L <: ListResource[_]]()(implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[Map[String, L]]
 
   /**
+    * Get stream of all resources across all namespaces in the cluster of a specified list type, grouped by namespace
+    * @tparam S the list resource type of resources to list e.g. PodList, DeploymentList
+    * @return A future with a map containing an entry for each namespace, each entry consists of an Akka streams Source of resources that will be emitted keyed by the name of their namespace
+    */
+  def streamByNamespace[S <: ObjectResource]()(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Map[String, Source[S, _]]]
+
+  /**
     * Get list of resources of a given type in a specified namespace
     * @param theNamespace the namespace to search
     * @tparam L the list resource type of the objects to retrieve e.g. PodList, DeploymentList
@@ -125,11 +147,26 @@ trait KubernetesClient {
   def listInNamespace[L <: ListResource[_]](theNamespace: String)(implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L]
 
   /**
+    * Get stream of resources of a given type in a specified namespace
+    * @param theNamespace the namespace to search
+    * @tparam S the stream resource type of the objects to retrieve e.g. PodList, DeploymentList
+    * @return A future containing an Akka streams Source of resources that will be emitted
+    */
+  def streamInNamespace[S <: ObjectResource](theNamespace: String)(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]]
+
+  /**
     * Get list of all resources of specified type in the configured namespace for the client
     * @tparam L the list type to retrieve e.g. PodList, DeploymentList
     * @return A future containing the resource list retrieved
     */
   def list[L <: ListResource[_]]()(implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L]
+
+  /**
+    * Get stream of all resources of specified type in the configured namespace for the client
+    * @tparam S the stream type to retrieve e.g. PodList, DeploymentList
+    * @return A future containing an Akka streams Source of resources that will be emitted
+    */
+  def stream[S <: ObjectResource]()(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]]
 
   /**
     * Get list of selected resources of specified type in the configured namespace for the client
@@ -140,12 +177,29 @@ trait KubernetesClient {
   def listSelected[L <: ListResource[_]](labelSelector: LabelSelector)(implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L]
 
   /**
+    * Get stream of selected resources of specified type in the configured namespace for the client
+    * @param labelSelector the label selector to use to select the resources to return
+    * @tparam S the stream type of the resources to retrieve e.g. PodList, DeploymentList
+    * @return A future containing an Akka streams Source of resources that will be emitted
+    */
+  def streamSelected[S <: ObjectResource](labelSelector: LabelSelector)(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]]
+
+  /**
     * Get list of resources of specified type, applying the specified options to the list request
     * @param options a set of options to be added to the request that can modify how the request is handled by Kubernetes.
     * @tparam L the list type of the resources to retrieve e.g. PodList, DeploymentList
     * @return A future containing the resource list retrieved
     */
   def listWithOptions[L <: ListResource[_]](options: ListOptions)(implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L]
+
+  /**
+    * Get stream of resources of specified type, applying the specified options to the list request
+    * @param options a set of options to be added to the request that can modify how the request is handled by Kubernetes.
+    * @tparam S the stream type of the resources to retrieve e.g. PodList, DeploymentList
+    * @return A future containing an Akka streams Source of resources that will be emitted
+    */
+  def streamWithOptions[S <: ObjectResource](options: ListOptions)(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]]
+
 
   /**
     * Update the status subresource of a given object resource. Only supported by certain object resource kinds (which need to have defined an

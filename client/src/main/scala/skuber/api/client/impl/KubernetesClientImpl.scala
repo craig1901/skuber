@@ -11,8 +11,9 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
 import com.typesafe.config.{Config, ConfigFactory}
+
 import javax.net.ssl.SSLContext
-import play.api.libs.json.{Format, Writes, Reads}
+import play.api.libs.json.{Format, Reads, Writes}
 import skuber._
 import skuber.api.client.exec.PodExecImpl
 import skuber.api.client.{K8SException => _, _}
@@ -22,6 +23,7 @@ import skuber.json.PlayJsonSupportForAkkaHttp._
 import skuber.json.format.apiobj.statusReads
 import skuber.json.format.{apiVersionsFormat, deleteOptionsFmt, namespaceListFmt}
 import skuber.api.patch._
+import skuber.api.streaming.BytesToStreamResource
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -200,6 +202,15 @@ class KubernetesClientImpl private[client] (
     } yield result
   }
 
+  private[skuber] def makeRequestReturningStreamResource[S <: ObjectResource](httpRequest: HttpRequest)(
+    implicit fmt: Format[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    for {
+      httpResponse <- invoke(httpRequest)
+      result <- streamKubernetesListResponse[S](httpResponse)
+    } yield result
+  }
+
   /**
     * Modify the specified K8S resource using a given HTTP method. The modified resource is returned.
     * The create, update and partiallyUpdate methods all call this, just passing different HTTP methods
@@ -298,6 +309,18 @@ class KubernetesClientImpl private[client] (
     }
   }
 
+  override def streamByNamespace[S <: ObjectResource]()(
+    implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Map[String, Source[S, _]]] =
+  {
+    val nsNamesFut: Future[List[String]] = getNamespaceNames
+    nsNamesFut.flatMap{ nsNames: List[String] =>
+      Future.sequence(nsNames.map{ nsName =>
+        streamInNamespace[S](nsName)
+          .map(namespacedStream => (nsName, namespacedStream))
+      }).map(_.toMap[String, Source[S, _]])
+    }
+  }
+
   /*
    * List all objects of given kind in the specified namespace on the cluster
    */
@@ -314,6 +337,13 @@ class KubernetesClientImpl private[client] (
     makeRequestReturningListResource[L](req)
   }
 
+  override def streamInNamespace[S <: ObjectResource](theNamespace: String)(
+    implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    val req = buildRequest(HttpMethods.GET, rd, None, namespace = theNamespace)
+    makeRequestReturningStreamResource[S](req)
+  }
+
   /*
    * List objects of specific resource kind in current namespace
    */
@@ -321,6 +351,11 @@ class KubernetesClientImpl private[client] (
     implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L] =
   {
     _list[L](rd, None)
+  }
+
+  override def stream[S <: ObjectResource]()(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    _stream[S](rd, None)
   }
 
   /*
@@ -332,10 +367,22 @@ class KubernetesClientImpl private[client] (
     _list[L](rd, Some(ListOptions(labelSelector=Some(labelSelector))))
   }
 
+  override def streamSelected[S <: ObjectResource](labelSelector: LabelSelector)(
+    implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    _stream[S](rd, Some(ListOptions(labelSelector = Some(labelSelector))))
+  }
+
   override def listWithOptions[L <: ListResource[_]](options: ListOptions)(
    implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L] =
   {
     _list[L](rd, Some(options))
+  }
+
+  override def streamWithOptions[S <: ObjectResource](options: ListOptions)(
+    implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    _stream[S](rd, Some(options))
   }
 
   private def _list[L <: ListResource[_]](rd: ResourceDefinition[_], maybeOptions: Option[ListOptions])(
@@ -350,6 +397,19 @@ class KubernetesClientImpl private[client] (
     }
     val req = buildRequest(HttpMethods.GET, rd, None, query = queryOpt)
     makeRequestReturningListResource[L](req)
+  }
+
+  private def _stream[S <: ObjectResource](rd: ResourceDefinition[_], maybeOptions: Option[ListOptions])(
+    implicit fmt: Format[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    val queryOpt = maybeOptions.map(opts => Uri.Query(opts.asMap))
+    if (log.isDebugEnabled) {
+      val optsInfo = maybeOptions.map(opts => s" with options '${opts.asMap.toString}'").getOrElse("")
+      logDebug(s"[List request: resources of kind '${rd.spec.names.kind}' $optsInfo")
+    }
+
+    val req = buildRequest(HttpMethods.GET, rd, None, query = queryOpt)
+    makeRequestReturningStreamResource[S](req)
   }
 
   override def getOption[O <: ObjectResource](name: String)(
@@ -409,10 +469,20 @@ class KubernetesClientImpl private[client] (
     _deleteAll[L](rd, None)
   }
 
+  override def deleteAllStream[S <: ObjectResource]()(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    _deleteAllStream[S](rd, None)
+  }
+
   override def deleteAllSelected[L <: ListResource[_]](labelSelector: LabelSelector)(
     implicit fmt: Format[L], rd: ResourceDefinition[L], lc: LoggingContext): Future[L] =
   {
     _deleteAll[L](rd, Some(labelSelector))
+  }
+
+  override def deleteAllSelectedStream[S <: ObjectResource](labelSelector: LabelSelector)(implicit fmt: Format[S], rd: ResourceDefinition[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    _deleteAllStream[S](rd, Some(labelSelector))
   }
 
   private def _deleteAll[L <: ListResource[_]](rd: ResourceDefinition[_], maybeLabelSelector: Option[LabelSelector])(
@@ -427,6 +497,19 @@ class KubernetesClientImpl private[client] (
     }
     val req = buildRequest(HttpMethods.DELETE, rd, None, query = queryOpt)
     makeRequestReturningListResource[L](req)
+  }
+
+  private def _deleteAllStream[S <: ObjectResource](rd: ResourceDefinition[_], maybeLabelSelector: Option[LabelSelector])(
+    implicit fmt: Format[S], lc: LoggingContext): Future[Source[S, _]] =
+  {
+    val queryOpt = maybeLabelSelector.map(ls => Uri.Query("labelSelector" -> ls.toString))
+
+    if (log.isDebugEnabled) {
+      val lsInfo = maybeLabelSelector.map(ls => s" with label selector '${ls.toString}'" ).getOrElse("")
+      logDebug(s"[Delete request: resources of kind '${rd.spec.names.kind}'$lsInfo")
+    }
+    val req = buildRequest(HttpMethods.DELETE, rd, None, query = queryOpt)
+    makeRequestReturningStreamResource[S](req)
   }
 
   override def getPodLogSource(name: String, queryParams: Pod.LogQueryParams, namespace: Option[String] = None)(
@@ -655,6 +738,16 @@ class KubernetesClientImpl private[client] (
             logError("Unable to unmarshal resource from response", ex)
             throw new K8SException(Status(message = Some("Error unmarshalling resource from response"), details = Some(ex.getMessage)))
         }
+    }
+  }
+
+  private[skuber] def streamKubernetesListResponse[S <: ObjectResource](response: HttpResponse)(
+    implicit fmt: Format[S], executionContext: ExecutionContext, lc: LoggingContext): Future[Source[S, _]] =
+  {
+    val statusOptFut = checkResponseStatus(response)
+    statusOptFut.map {
+      case Some(status) => throw new K8SException(status)
+      case None => BytesToStreamResource[S](response.entity.dataBytes)
     }
   }
 
